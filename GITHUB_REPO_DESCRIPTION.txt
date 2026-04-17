@@ -1,0 +1,31 @@
+GitHub Repository Description (for the "About" section):
+
+Short description (recommended):
+A CLI tool to combine multiple files (MD, TXT, DOCX, PDF, SVG) into a single document for Google's NotebookLM
+
+Alternative shorter version:
+Combine multiple files into one for NotebookLM upload
+
+Topics/Tags to add:
+- notebooklm
+- google-notebooklm
+- markdown
+- pdf
+- docx
+- svg
+- cli-tool
+- python
+- study-notes
+- document-converter
+- text-extraction
+
+Website (optional):
+Leave blank or add your GitHub Pages URL if you create one
+
+---
+
+README.md Title (already done):
+# nlm_prep.py - NotebookLM Upload Prep Tool
+
+First paragraph of README (already done):
+A Python CLI tool that combines multiple files (Markdown, TXT, DOCX, PDF, SVG) from a directory into a single consolidated document ready for upload to Google's NotebookLM.

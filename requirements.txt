@@ -6,3 +6,9 @@ python-docx>=0.8.11
 
 # For PDF file support (optional but recommended)
 PyMuPDF>=1.23.0
+
+# For media file metadata extraction (optional but recommended)
+tinytag>=1.10.0
+
+# For HTML file parsing (optional but recommended)
+beautifulsoup4>=4.12.0

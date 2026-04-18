@@ -2,7 +2,7 @@
 """
 nlm_prep.py - NotebookLM Upload Prep Tool
 
-Combines multiple files (md, txt, docx, pdf, svg) from a directory into a single
+Combines multiple files (md, txt, docx, pdf, svg, html, mp4, wav, mp3) from a directory into a single
 consolidated markdown file ready for upload to Google's NotebookLM.
 
 Usage:
@@ -16,8 +16,9 @@ import os
 import sys
 import argparse
 import xml.etree.ElementTree as ET
+import shutil
 from pathlib import Path
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, Dict
 from datetime import datetime
 
 # Try to import optional dependencies, provide helpful errors if not installed
@@ -33,6 +34,18 @@ try:
 except ImportError:
     PDF_AVAILABLE = False
 
+try:
+    from tinytag import TinyTag
+    MEDIA_AVAILABLE = True
+except ImportError:
+    MEDIA_AVAILABLE = False
+
+try:
+    from bs4 import BeautifulSoup
+    HTML_AVAILABLE = True
+except ImportError:
+    HTML_AVAILABLE = False
+
 
 def parse_args() -> argparse.Namespace:
     """Parse command line arguments."""
@@ -43,6 +56,7 @@ def parse_args() -> argparse.Namespace:
 Examples:
   python nlm_prep.py "G:\\My Notes" -o combined.md
   python nlm_prep.py ./study-materials -o output.md --verbose
+  python nlm_prep.py ./course -o combined.md --media-dir ./media
         """
     )
     parser.add_argument(
@@ -74,6 +88,26 @@ Examples:
         action="store_true",
         help="Skip SVG files"
     )
+    parser.add_argument(
+        "--skip-media",
+        action="store_true",
+        help="Skip media files (mp4, wav, mp3)"
+    )
+    parser.add_argument(
+        "--skip-html",
+        action="store_true",
+        help="Skip HTML files"
+    )
+    parser.add_argument(
+        "--media-dir",
+        default="media",
+        help="Output directory for media files (default: media)"
+    )
+    parser.add_argument(
+        "--no-media-index",
+        action="store_true",
+        help="Skip generating media index file"
+    )
     
     return parser.parse_args()
 
@@ -83,7 +117,7 @@ def get_supported_files(input_dir: Path) -> List[Tuple[Path, str]]:
     Recursively find all supported files in the directory.
     Returns list of (file_path, relative_path) tuples.
     """
-    supported_extensions = {'.md', '.txt', '.docx', '.pdf', '.svg'}
+    supported_extensions = {'.md', '.txt', '.docx', '.pdf', '.svg', '.html', '.htm', '.mp4', '.wav', '.mp3'}
     files = []
     
     for file_path in input_dir.rglob('*'):
@@ -322,6 +356,198 @@ def format_file_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} TB"
 
 
+def extract_media_metadata(media_path: Path) -> Dict[str, str]:
+    """
+    Extract metadata from media files (mp4, wav, mp3).
+    Returns a dictionary with metadata information.
+    """
+    if not MEDIA_AVAILABLE:
+        return {"error": "tinytag not installed, install with: pip install tinytag"}
+    
+    try:
+        tag = TinyTag.get(media_path)
+        metadata = {
+            "title": tag.title or "",
+            "artist": tag.artist or "",
+            "album": tag.album or "",
+            "duration": f"{int(tag.duration // 60)}:{int(tag.duration % 60):02d}" if tag.duration else "",
+            "bitrate": f"{tag.bitrate} kbps" if tag.bitrate else "",
+            "samplerate": f"{tag.samplerate} Hz" if tag.samplerate else "",
+            "filesize": format_file_size(tag.filesize) if tag.filesize else "",
+        }
+        return metadata
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def copy_media_file(source: Path, dest_dir: Path, counter: int) -> Tuple[Path, str]:
+    """
+    Copy a media file to the destination directory with sequential numbering.
+    Returns (new_path, new_filename).
+    """
+    # Create destination directory if it doesn't exist
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Generate new filename with sequential number
+    new_filename = f"{counter:03d}_{source.name}"
+    dest_path = dest_dir / new_filename
+    
+    # Copy the file
+    shutil.copy2(source, dest_path)
+    
+    return dest_path, new_filename
+
+
+def extract_html_content(html_path: Path) -> str:
+    """
+    Extract text content from HTML file and convert to Markdown.
+    Preserves headings, paragraphs, lists, and links.
+    """
+    if not HTML_AVAILABLE:
+        return f"\n[HTML file: {html_path.name} - beautifulsoup4 not installed, install with: pip install beautifulsoup4]\n"
+    
+    try:
+        with open(html_path, 'r', encoding='utf-8') as f:
+            soup = BeautifulSoup(f.read(), 'html.parser')
+        
+        markdown_lines = []
+        markdown_lines.append(f"*HTML Document: {html_path.name}*")
+        markdown_lines.append("")
+        
+        # Remove script and style elements
+        for script in soup(["script", "style"]):
+            script.decompose()
+        
+        # Process elements in order
+        for element in soup.find_all(['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'ul', 'ol', 'li', 'a', 'table', 'pre', 'code', 'blockquote']):
+            if element.name == 'h1':
+                markdown_lines.append(f"# {element.get_text().strip()}")
+            elif element.name == 'h2':
+                markdown_lines.append(f"## {element.get_text().strip()}")
+            elif element.name == 'h3':
+                markdown_lines.append(f"### {element.get_text().strip()}")
+            elif element.name == 'h4':
+                markdown_lines.append(f"#### {element.get_text().strip()}")
+            elif element.name == 'h5':
+                markdown_lines.append(f"##### {element.get_text().strip()}")
+            elif element.name == 'h6':
+                markdown_lines.append(f"###### {element.get_text().strip()}")
+            elif element.name == 'p':
+                text = element.get_text().strip()
+                if text:
+                    markdown_lines.append(text)
+            elif element.name == 'li':
+                # Check if parent is ul or ol
+                parent = element.find_parent(['ul', 'ol'])
+                if parent and parent.name == 'ol':
+                    # For ordered lists, we'll handle numbering separately
+                    markdown_lines.append(f"1. {element.get_text().strip()}")
+                else:
+                    markdown_lines.append(f"- {element.get_text().strip()}")
+            elif element.name == 'a':
+                href = element.get('href', '')
+                text = element.get_text().strip()
+                if href and text:
+                    markdown_lines.append(f"[{text}]({href})")
+            elif element.name == 'pre':
+                # Code block
+                code_text = element.get_text().strip()
+                if code_text:
+                    markdown_lines.append(f"```\n{code_text}\n```")
+            elif element.name == 'blockquote':
+                text = element.get_text().strip()
+                if text:
+                    markdown_lines.append(f"> {text}")
+        
+        # Clean up consecutive empty lines
+        cleaned_lines = []
+        prev_empty = False
+        for line in markdown_lines:
+            is_empty = not line.strip()
+            if is_empty and prev_empty:
+                continue
+            cleaned_lines.append(line)
+            prev_empty = is_empty
+        
+        return '\n'.join(cleaned_lines)
+    
+    except Exception as e:
+        return f"\n[Error reading HTML file {html_path.name}: {str(e)}]\n"
+
+
+def generate_media_index(media_files: List[Tuple[Path, str, str, Dict[str, str]]], output_dir: Path) -> None:
+    """
+    Generate an INDEX.md file for media files.
+    media_files is a list of (original_path, new_filename, file_type, metadata) tuples.
+    """
+    index_lines = []
+    index_lines.append("# Media Files Index")
+    index_lines.append("")
+    index_lines.append("*This file maps original media file locations to their new names in this directory.*")
+    index_lines.append("")
+    index_lines.append(f"*Generated on: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}*")
+    index_lines.append("")
+    index_lines.append("---")
+    index_lines.append("")
+    
+    # Summary table
+    index_lines.append("## Summary")
+    index_lines.append("")
+    index_lines.append(f"**Total Media Files:** {len(media_files)}")
+    index_lines.append("")
+    
+    # Count by type
+    type_counts = {}
+    for _, _, file_type, _ in media_files:
+        type_counts[file_type] = type_counts.get(file_type, 0) + 1
+    
+    if type_counts:
+        index_lines.append("**File Types:**")
+        for file_type, count in sorted(type_counts.items()):
+            index_lines.append(f"- {file_type.upper()}: {count}")
+    index_lines.append("")
+    index_lines.append("---")
+    index_lines.append("")
+    
+    # Detailed file listing
+    index_lines.append("## File Listing")
+    index_lines.append("")
+    
+    for i, (original_path, new_filename, file_type, metadata) in enumerate(media_files, 1):
+        index_lines.append(f"### {i}. {new_filename}")
+        index_lines.append("")
+        index_lines.append(f"**Original Path:** `{original_path}`")
+        index_lines.append("")
+        index_lines.append(f"**Type:** {file_type.upper()}")
+        index_lines.append("")
+        
+        # Add metadata if available
+        if metadata and "error" not in metadata:
+            if metadata.get("title"):
+                index_lines.append(f"**Title:** {metadata['title']}")
+            if metadata.get("artist"):
+                index_lines.append(f"**Artist:** {metadata['artist']}")
+            if metadata.get("album"):
+                index_lines.append(f"**Album:** {metadata['album']}")
+            if metadata.get("duration"):
+                index_lines.append(f"**Duration:** {metadata['duration']}")
+            if metadata.get("bitrate"):
+                index_lines.append(f"**Bitrate:** {metadata['bitrate']}")
+            if metadata.get("samplerate"):
+                index_lines.append(f"**Sample Rate:** {metadata['samplerate']}")
+            if metadata.get("filesize"):
+                index_lines.append(f"**File Size:** {metadata['filesize']}")
+        elif metadata and "error" in metadata:
+            index_lines.append(f"**Metadata Error:** {metadata['error']}")
+        
+        index_lines.append("")
+    
+    # Write index file
+    index_path = output_dir / "INDEX.md"
+    with open(index_path, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(index_lines))
+
+
 def main():
     args = parse_args()
     
@@ -347,6 +573,18 @@ def main():
         print("Or use --skip-pdf to suppress this warning")
         print()
     
+    if not MEDIA_AVAILABLE and not args.skip_media:
+        print("Warning: tinytag not installed. Media files will be skipped.")
+        print("To install: pip install tinytag")
+        print("Or use --skip-media to suppress this warning")
+        print()
+    
+    if not HTML_AVAILABLE and not args.skip_html:
+        print("Warning: beautifulsoup4 not installed. HTML files will be skipped.")
+        print("To install: pip install beautifulsoup4")
+        print("Or use --skip-html to suppress this warning")
+        print()
+    
     # Find all supported files
     if args.verbose:
         print(f"Scanning: {input_dir}")
@@ -355,7 +593,7 @@ def main():
     
     if not files:
         print(f"No supported files found in {input_dir}")
-        print("Supported formats: .md, .txt, .docx, .pdf, .svg")
+        print("Supported formats: .md, .txt, .docx, .pdf, .svg, .html, .htm, .mp4, .wav, .mp3")
         sys.exit(1)
     
     # Group files by type for reporting
@@ -364,6 +602,8 @@ def main():
     docx_files = [f for f in files if f[0].suffix.lower() == '.docx']
     pdf_files = [f for f in files if f[0].suffix.lower() == '.pdf']
     svg_files = [f for f in files if f[0].suffix.lower() == '.svg']
+    html_files = [f for f in files if f[0].suffix.lower() in ('.html', '.htm')]
+    media_files = [f for f in files if f[0].suffix.lower() in ('.mp4', '.wav', '.mp3')]
     
     print(f"Found {len(files)} files:")
     print(f"  - Markdown: {len(md_files)}")
@@ -371,7 +611,14 @@ def main():
     print(f"  - DOCX: {len(docx_files)}")
     print(f"  - PDF: {len(pdf_files)}")
     print(f"  - SVG: {len(svg_files)}")
+    print(f"  - HTML: {len(html_files)}")
+    print(f"  - Media: {len(media_files)}")
     print()
+    
+    # Setup media directory
+    media_dir = Path(args.media_dir).resolve()
+    media_counter = 0
+    media_file_records = []  # For index generation
     
     # Generate output
     output_lines = []
@@ -429,6 +676,53 @@ def main():
             else:
                 content = extract_svg_content(file_path)
                 processed_count += 1
+        elif file_ext in ('.html', '.htm'):
+            if args.skip_html:
+                content = f"\n[HTML file skipped: {file_path.name}]\n"
+                skipped_count += 1
+            else:
+                content = extract_html_content(file_path)
+                processed_count += 1
+        elif file_ext in ('.mp4', '.wav', '.mp3'):
+            if args.skip_media:
+                content = f"\n[Media file skipped: {file_path.name}]\n"
+                skipped_count += 1
+            else:
+                # Copy media file and generate metadata
+                media_counter += 1
+                _, new_filename = copy_media_file(file_path, media_dir, media_counter)
+                metadata = extract_media_metadata(file_path)
+                
+                # Record for index
+                media_file_records.append((rel_path, new_filename, file_ext[1:], metadata))
+                
+                # Generate markdown content for media file
+                content_lines = []
+                content_lines.append(f"*Media File: {file_path.name}*")
+                content_lines.append("")
+                content_lines.append(f"**Type:** {file_ext[1:].upper()}")
+                content_lines.append(f"**Copied to:** `{media_dir.name}/{new_filename}`")
+                
+                if metadata and "error" not in metadata:
+                    if metadata.get("title"):
+                        content_lines.append(f"**Title:** {metadata['title']}")
+                    if metadata.get("artist"):
+                        content_lines.append(f"**Artist:** {metadata['artist']}")
+                    if metadata.get("album"):
+                        content_lines.append(f"**Album:** {metadata['album']}")
+                    if metadata.get("duration"):
+                        content_lines.append(f"**Duration:** {metadata['duration']}")
+                    if metadata.get("bitrate"):
+                        content_lines.append(f"**Bitrate:** {metadata['bitrate']}")
+                    if metadata.get("samplerate"):
+                        content_lines.append(f"**Sample Rate:** {metadata['samplerate']}")
+                    if metadata.get("filesize"):
+                        content_lines.append(f"**File Size:** {metadata['filesize']}")
+                elif metadata and "error" in metadata:
+                    content_lines.append(f"**Metadata Error:** {metadata['error']}")
+                
+                content = '\n'.join(content_lines)
+                processed_count += 1
         else:
             content = read_text_file(file_path)
             processed_count += 1
@@ -452,6 +746,11 @@ def main():
         print(f"Error writing output file: {e}")
         sys.exit(1)
     
+    # Generate media index if media files were processed
+    if media_file_records and not args.no_media_index:
+        generate_media_index(media_file_records, media_dir)
+        print(f"Media index generated: {media_dir / 'INDEX.md'}")
+    
     # Report results
     file_size = output_path.stat().st_size
     
@@ -464,6 +763,8 @@ def main():
     print(f"Files processed: {processed_count}")
     if skipped_count > 0:
         print(f"Files skipped: {skipped_count}")
+    if media_counter > 0:
+        print(f"Media files copied: {media_counter} to {media_dir}")
     print()
     print("Your file is ready to upload to NotebookLM!")
     print("Simply upload this single file as a source in your notebook.")

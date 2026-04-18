@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-A Python CLI tool that combines multiple files (Markdown, TXT, DOCX, PDF, SVG) from a directory into a single consolidated document ready for upload to Google's NotebookLM.
+A Python CLI tool that combines multiple files (Markdown, TXT, DOCX, PDF, SVG, HTML, MP4, WAV, MP3) from a directory into a single consolidated document ready for upload to Google's NotebookLM.
 
 ## Why This Tool?
 
@@ -12,10 +12,12 @@ Google's NotebookLM only allows single file uploads. If you have study notes spr
 
 - **Combining everything into ONE file** - Upload a single source to NotebookLM
 - **Preserving structure** - Table of contents with clickable links to each section
-- **Supporting multiple formats** - Markdown, TXT, DOCX, PDF, and SVG files
+- **Supporting multiple formats** - Markdown, TXT, DOCX, PDF, SVG, HTML, and media files
 - **Preserving DOCX formatting** - Converts headings, bold, italic, lists, and tables to Markdown
 - **Extracting PDF text** - Pulls text content from PDF documents page by page
 - **Extracting SVG text** - Extracts embedded text from SVG diagrams and illustrations
+- **Converting HTML to Markdown** - Preserves structure from web pages
+- **Managing media files** - Copies MP4, WAV, MP3 files with metadata extraction and generates an index
 
 ## Installation
 
@@ -37,7 +39,19 @@ For PDF support, install PyMuPDF:
 pip install pymupdf
 ```
 
-Without these, DOCX and PDF files will be skipped with a warning.
+For media file support (MP4, WAV, MP3), install tinytag:
+
+```bash
+pip install tinytag
+```
+
+For HTML file support, install beautifulsoup4:
+
+```bash
+pip install beautifulsoup4
+```
+
+Without these, the respective file types will be skipped with a warning.
 
 ## Usage
 
@@ -67,15 +81,29 @@ python nlm_prep.py "G:\My Study Notes" -o output.md --skip-pdf
 
 # Skip SVG files
 python nlm_prep.py "G:\My Study Notes" -o output.md --skip-svg
+
+# Skip media files
+python nlm_prep.py "G:\My Study Notes" -o output.md --skip-media
+
+# Skip HTML files
+python nlm_prep.py "G:\My Study Notes" -o output.md --skip-html
+
+# Specify custom media directory
+python nlm_prep.py "G:\My Course" -o combined.md --media-dir ./course_media
+
+# Skip generating media index file
+python nlm_prep.py "G:\My Course" -o combined.md --no-media-index
 ```
 
 ## How It Works
 
-1. **Scans recursively** - Finds all `.md`, `.txt`, `.docx`, `.pdf`, and `.svg` files in the directory
+1. **Scans recursively** - Finds all `.md`, `.txt`, `.docx`, `.pdf`, `.svg`, `.html`, `.htm`, `.mp4`, `.wav`, and `.mp3` files in the directory
 2. **Sorts files** - Orders them alphabetically for consistent, logical flow
 3. **Generates Table of Contents** - Creates clickable links to each section
 4. **Combines content** - Merges all files with clear section headers
 5. **Preserves formatting** - DOCX files are converted to Markdown with formatting intact
+6. **Handles media files** - Copies MP4, WAV, MP3 files to a media directory with metadata extraction
+7. **Converts HTML** - Extracts text content from HTML files and converts to Markdown
 
 ## Output Structure
 
@@ -114,6 +142,8 @@ The generated file looks like this:
 - **Word (.docx)** - Converted to Markdown with formatting preserved
 - **PDF (.pdf)** - Text extracted page by page
 - **SVG (.svg)** - Text extracted from `<text>`, `<title>`, and `<desc>` elements
+- **HTML (.html, .htm)** - Converted to Markdown with structure preserved
+- **Media (.mp4, .wav, .mp3)** - Copied to media directory with metadata extraction
 
 ### DOCX Formatting Preserved
 - Headings (H1-H6) → Markdown headers
@@ -123,6 +153,27 @@ The generated file looks like this:
 - Bullet lists → `- item`
 - Numbered lists → `1. item`
 - Tables → Markdown tables
+
+### HTML to Markdown Conversion
+- Headings (h1-h6) → Markdown headers
+- Paragraphs → Plain text
+- Lists → Markdown lists (bullet and numbered)
+- Links → Markdown links `[text](url)`
+- Code blocks → Fenced code blocks
+- Blockquotes → Markdown blockquotes
+- Script and style elements are removed
+
+### Media File Handling
+Media files (MP4, WAV, MP3) are:
+- **Copied** to a separate media directory (default: `media/`)
+- **Renamed** with sequential numbering (e.g., `001_video.mp4`)
+- **Indexed** in an INDEX.md file with metadata
+
+Extracted metadata includes:
+- Title, Artist, Album (from ID3 tags)
+- Duration (formatted as MM:SS)
+- Bitrate and Sample Rate
+- File Size
 
 ### Smart Organization
 - Files grouped by parent folder
@@ -152,6 +203,12 @@ Install it with: `pip install python-docx`
 
 ### "PyMuPDF not installed"
 Install it with: `pip install pymupdf`
+
+### "tinytag not installed"
+Install it with: `pip install tinytag`
+
+### "beautifulsoup4 not installed"
+Install it with: `pip install beautifulsoup4`
 
 ### SVG files not extracting text
 SVG text extraction only works on SVGs that have embedded `<text>`, `<title>`, or `<desc>` elements. Purely visual SVGs without text content will show "[No extractable text content found in this SVG]".
